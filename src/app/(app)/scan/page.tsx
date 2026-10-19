@@ -27,10 +27,6 @@ export default function ScanPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">AI Food Analyzer</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Photograph a meal — Gemini estimates what it is, how much, and its
-          macros so you can save it in one tap.
-        </p>
       </div>
 
       {!aiEnabled && (

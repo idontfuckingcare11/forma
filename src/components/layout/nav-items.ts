@@ -27,6 +27,6 @@ export const BOTTOM_NAV: NavItem[] = [
   MAIN_NAV[0],
   MAIN_NAV[1],
   MAIN_NAV[2],
-  MAIN_NAV[3],
+  MAIN_NAV[4],
   { href: "/profile", label: "Profile", icon: User },
 ];

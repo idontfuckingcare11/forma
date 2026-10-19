@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Camera, NotebookPen, Scale } from "lucide-react";
+import { Camera, MessageCircle, NotebookPen, Scale } from "lucide-react";
 
 const ACTIONS = [
   {
@@ -16,6 +16,12 @@ const ACTIONS = [
     accent: false,
   },
   {
+    href: "/assistant",
+    label: "AI Coach",
+    icon: MessageCircle,
+    accent: false,
+  },
+  {
     href: "/progress",
     label: "Log weight",
     icon: Scale,
@@ -25,7 +31,7 @@ const ACTIONS = [
 
 export function QuickActions() {
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {ACTIONS.map((action) => {
         const Icon = action.icon;
         return (
