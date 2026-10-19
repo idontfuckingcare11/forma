@@ -8,12 +8,12 @@ export default function AssistantPage() {
   const aiEnabled = Boolean(process.env.GEMINI_API_KEY);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
           AI Nutrition Assistant
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
           Ask anything about your diary, targets, or progress — answers are
           grounded in your actual logged data.
         </p>

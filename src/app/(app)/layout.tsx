@@ -60,7 +60,7 @@ export default async function AppLayout({
         <main
           id="main-content"
           tabIndex={-1}
-          className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 outline-none sm:px-6 lg:pb-10 lg:pt-8"
+          className="mx-auto w-full max-w-6xl px-4 pt-[max(1.5rem,calc(env(safe-area-inset-top)+0.75rem))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] outline-none sm:px-6 lg:pb-10 lg:pt-8"
         >
           {children}
         </main>
