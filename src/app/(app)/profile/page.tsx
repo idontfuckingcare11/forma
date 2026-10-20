@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
+import { AiCoachCard } from "@/components/profile/ai-coach-card";
 import type { GoalType } from "@/lib/db-types";
 
 export const metadata: Metadata = { title: "Profile & Settings" };
@@ -44,6 +45,8 @@ export default async function ProfilePage() {
           Manage your account, photo, units, and nutrition targets.
         </p>
       </div>
+
+      <AiCoachCard displayName={profileRes.data?.display_name} />
 
       <ProfileSettings
         userId={user.id}
