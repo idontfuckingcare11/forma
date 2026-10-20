@@ -170,9 +170,6 @@ export function AssistantChat({ aiEnabled }: { aiEnabled: boolean }) {
             <Send className="size-4" />
           </Button>
         </div>
-        <p className="mt-1.5 text-center sm:text-left text-[10px] text-muted-foreground">
-          Estimates only — AI can be wrong; verify important numbers.
-        </p>
       </div>
     </div>
   );
