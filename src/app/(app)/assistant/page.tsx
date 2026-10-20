@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { AssistantChat } from "@/components/assistant/chat";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 export const metadata: Metadata = { title: "AI Assistant" };
 
@@ -33,7 +34,15 @@ export default function AssistantPage() {
         </div>
       )}
 
-      <AssistantChat aiEnabled={aiEnabled} />
+      <Suspense
+        fallback={
+          <div className="flex h-64 items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        }
+      >
+        <AssistantChat aiEnabled={aiEnabled} />
+      </Suspense>
     </div>
   );
 }

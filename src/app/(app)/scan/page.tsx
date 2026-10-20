@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ScanAnalyzer } from "@/components/scan/scan-analyzer";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, Camera, Lightbulb, Sparkles } from "lucide-react";
+import { AlertTriangle, Camera, Compass, Lightbulb, Sparkles } from "lucide-react";
 
 export const metadata: Metadata = { title: "AI Analyzer" };
 
@@ -25,8 +27,19 @@ export default function ScanPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">AI Food Analyzer</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">AI Food Analyzer</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Snap a photo of your plate or packaged meal for instant macro breakdown.
+          </p>
+        </div>
+        <Button asChild variant="outline" className="rounded-xl gap-2 font-medium shrink-0">
+          <Link href="/places">
+            <Compass className="size-4 text-primary" />
+            <span>Find Nearby Menus</span>
+          </Link>
+        </Button>
       </div>
 
       {!aiEnabled && (

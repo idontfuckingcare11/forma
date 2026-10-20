@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { askAssistant, type ChatTurn } from "@/lib/actions/assistant";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,15 +13,23 @@ type Message = { role: "user" | "assistant"; content: string };
 
 const SUGGESTIONS = [
   "How much protein do I still need today?",
-  "How did I do this week?",
+  "What should I order when eating out tonight?",
   "What can I eat to stay under my calorie target?",
 ];
 
 export function AssistantChat({ aiEnabled }: { aiEnabled: boolean }) {
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) {
+      setInput(q);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const el = scrollRef.current;

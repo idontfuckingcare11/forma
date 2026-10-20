@@ -11,7 +11,9 @@ import { AddFoodDialog } from "@/components/diary/add-food-dialog";
 import { EntryActions } from "@/components/diary/entry-actions";
 import { WaterCard } from "@/components/diary/water-card";
 import { io } from "next/cache";
-import { UtensilsCrossed } from "lucide-react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Compass, UtensilsCrossed } from "lucide-react";
 
 export const metadata: Metadata = { title: "Food Diary" };
 
@@ -51,6 +53,12 @@ export default async function DiaryPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm" className="rounded-xl gap-1.5 h-9">
+            <Link href="/places">
+              <Compass className="size-3.5 text-primary" />
+              <span>Nearby Dining</span>
+            </Link>
+          </Button>
           <AddFoodDialog meal="breakfast" dateKey={dateKey} />
           <DateNav dateKey={dateKey} basePath="/diary" />
         </div>
