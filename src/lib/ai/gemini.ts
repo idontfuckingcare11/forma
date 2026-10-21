@@ -9,6 +9,8 @@ export type FoodEstimate = {
   fatPer100g: number;
   confidence: number;
   notes: string;
+  servingUnit?: string;
+  servingWeightGrams?: number;
 };
 
 export type AnalyzeResult =
@@ -21,18 +23,18 @@ const RESPONSE_SCHEMA = {
     is_food: {
       type: "boolean",
       description:
-        "True only if the photo clearly shows edible food or a drink.",
+        "True only if the photo clearly shows edible food, drink, or a nutrition facts label.",
     },
     name: {
       type: "string",
       description:
-        "Short name of the dish, e.g. 'Grilled chicken with rice'. Max 60 chars.",
+        "Short name of the dish or product, e.g. 'Whey protein isolate powder'. Max 60 chars.",
     },
     portion_grams: {
       type: "number",
       minimum: 1,
       maximum: 5000,
-      description: "Estimated weight of the whole visible serving in grams.",
+      description: "Estimated weight of the whole visible serving or 1 standard single serving in grams.",
     },
     kcal_per_100g: {
       type: "number",
@@ -53,7 +55,19 @@ const RESPONSE_SCHEMA = {
     notes: {
       type: "string",
       description:
-        "One short sentence stating key assumptions, e.g. 'assumed grilled, light oil'.",
+        "One short sentence stating key assumptions or nutrition facts label details.",
+    },
+    serving_unit: {
+      type: "string",
+      description:
+        "The unit name for 1 serving if known (lowercase singular, e.g. 'scoop', 'slice', 'piece', 'can', 'bottle', 'bar', 'cup', 'serving').",
+    },
+    serving_weight_grams: {
+      type: "number",
+      minimum: 1,
+      maximum: 5000,
+      description:
+        "Weight in grams of ONE standard single serving or unit (e.g. 30 for 1 scoop of protein powder, 28 for 1 slice).",
     },
   },
   required: [
@@ -70,15 +84,20 @@ const RESPONSE_SCHEMA = {
 } as const;
 
 const PROMPT = `You are a nutrition analyst for a calorie-tracking app.
-Analyze the photo and estimate nutrition for the visible food or drink.
+Analyze the photo and estimate nutrition for the visible food, drink, or packaged nutrition facts label.
 
 Rules:
-- portion_grams is the total weight of ONE realistic serving of what is visible.
+- If the image is a Nutrition Facts or Supplement Facts label:
+  * Extract the serving size in grams (e.g. 30g) and serving unit (e.g. 'scoop', 'serving', 'bar', 'slice', 'piece', 'can', 'bottle', 'cup').
+  * Calculate the nutrition values per 100 grams based on the label's values per serving.
+  * In 'notes', specify the detected serving size and label values (e.g. 'Values calculated from nutrition facts label showing 120 kcal per 30g scoop').
+- serving_unit: The unit of 1 serving (lowercase singular noun, e.g. 'scoop', 'serving', 'slice', 'piece', 'can', 'bottle', 'bar', 'cup', 'bowl').
+- serving_weight_grams: The weight in grams of 1 serving/unit.
+- portion_grams is the total weight of ONE realistic serving or visible amount in grams.
 - All *_per_100g values are per 100 grams AS EATEN (include visible oil, butter, sauce, dressing).
 - Assume plain preparation (grilled/baked, minimal added fat) unless fat or sauce is visible.
-- If the photo does not clearly show food or a drink, set is_food to false and leave other fields as best guesses.
+- If the photo does not clearly show food, a drink, or a nutrition facts label, set is_food to false and leave other fields as best guesses.
 - confidence reflects certainty about both identity and portion size.
-- notes states your single biggest assumption in one sentence.
 - Never invent a brand name.`;
 
 function clamp(v: number, min: number, max: number): number {
@@ -208,15 +227,84 @@ export async function analyzeFoodImage(
   const name = typeof o.name === "string" ? o.name.trim().slice(0, 80) : "";
   if (!name) return { ok: false, error: "Could not identify the food in this photo." };
 
+  const portionGrams = Math.round(clamp(toFinite(o.portion_grams, 150), 1, 5000));
+  const rawNotes = typeof o.notes === "string" ? o.notes.trim().slice(0, 160) : "";
+
+  // Smart unit & serving weight inference
+  let servingUnit =
+    typeof o.serving_unit === "string" && o.serving_unit.trim()
+      ? o.serving_unit.trim().toLowerCase().slice(0, 30)
+      : "";
+  let servingWeight =
+    typeof o.serving_weight_grams === "number" && Number.isFinite(o.serving_weight_grams)
+      ? Math.round(clamp(o.serving_weight_grams, 1, 5000))
+      : 0;
+
+  const combined = `${name} ${rawNotes}`.toLowerCase();
+  if (!servingUnit || servingUnit === "serving" || servingUnit === "portion") {
+    if (
+      combined.includes("scoop") ||
+      combined.includes("powder") ||
+      combined.includes("whey") ||
+      combined.includes("isolate") ||
+      combined.includes("creatine") ||
+      combined.includes("bcaa") ||
+      combined.includes("pre-workout") ||
+      combined.includes("preworkout")
+    ) {
+      servingUnit = "scoop";
+    } else if (
+      combined.includes("slice") ||
+      combined.includes("bread") ||
+      combined.includes("toast") ||
+      combined.includes("pizza")
+    ) {
+      servingUnit = "slice";
+    } else if (combined.includes("bar")) {
+      servingUnit = "bar";
+    } else if (combined.includes("can") || combined.includes("soda")) {
+      servingUnit = "can";
+    } else if (combined.includes("bottle")) {
+      servingUnit = "bottle";
+    } else if (
+      combined.includes("piece") ||
+      combined.includes("egg") ||
+      combined.includes("cookie") ||
+      combined.includes("wing")
+    ) {
+      servingUnit = "piece";
+    } else if (combined.includes("cup") || combined.includes("bowl")) {
+      servingUnit = "cup";
+    } else {
+      servingUnit = "serving";
+    }
+  }
+
+  // If serving weight wasn't explicitly given, check notes like "per 29.92g serving" or default to portionGrams
+  if (!servingWeight || servingWeight <= 0) {
+    const match = rawNotes.match(/per\s+([\d.]+)\s*g/i) || rawNotes.match(/([\d.]+)\s*g\s+(?:serving|scoop|portion)/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0 && parsed <= 5000) {
+        servingWeight = Math.round(parsed);
+      }
+    }
+  }
+  if (!servingWeight || servingWeight <= 0) {
+    servingWeight = portionGrams;
+  }
+
   const estimate: FoodEstimate = {
     name,
-    portionGrams: Math.round(clamp(toFinite(o.portion_grams, 150), 1, 5000)),
+    portionGrams,
     kcalPer100g: Math.round(clamp(toFinite(o.kcal_per_100g, 0), 0, 950)),
     proteinPer100g: Math.round(clamp(toFinite(o.protein_per_100g, 0), 0, 100)),
     carbsPer100g: Math.round(clamp(toFinite(o.carbs_per_100g, 0), 0, 100)),
     fatPer100g: Math.round(clamp(toFinite(o.fat_per_100g, 0), 0, 100)),
     confidence: Math.round(clamp(toFinite(o.confidence, 0.5), 0, 1) * 100) / 100,
-    notes: typeof o.notes === "string" ? o.notes.trim().slice(0, 160) : "",
+    notes: rawNotes,
+    servingUnit,
+    servingWeightGrams: servingWeight,
   };
 
   return { ok: true, data: estimate };

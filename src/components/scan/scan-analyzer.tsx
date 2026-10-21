@@ -7,22 +7,33 @@ import { addFoodEntry } from "@/lib/actions/food";
 import type { FoodEstimate } from "@/lib/ai/gemini";
 import type { MealType } from "@/lib/db-types";
 import { todayKey } from "@/lib/dates";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   MacroPreview,
   MealSelect,
-  PortionField,
 } from "@/components/diary/food-fields";
 import { toast } from "sonner";
 import {
   Camera,
   Loader2,
+  Minus,
   Plus,
   RotateCcw,
+  Scale,
   ScanLine,
+  SlidersHorizontal,
   Sparkles,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -32,6 +43,35 @@ type Stage = "idle" | "camera" | "analyzing" | "review";
 
 const MAX_SIDE = 1280;
 const JPEG_QUALITY = 0.85;
+
+const COMMON_UNITS = [
+  "scoop",
+  "serving",
+  "slice",
+  "piece",
+  "bar",
+  "can",
+  "bottle",
+  "cup",
+  "bowl",
+  "packet",
+  "tbsp",
+];
+
+function formatUnit(unit: string, count: number): string {
+  const normalized = unit.trim().toLowerCase();
+  if (count === 1) return normalized;
+  if (normalized.endsWith("s")) return normalized;
+  if (
+    normalized.endsWith("ch") ||
+    normalized.endsWith("sh") ||
+    normalized.endsWith("x") ||
+    normalized.endsWith("z")
+  ) {
+    return `${normalized}es`;
+  }
+  return `${normalized}s`;
+}
 
 function guessMeal(): MealType {
   const h = new Date().getHours();
@@ -68,6 +108,14 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   const [meal, setMeal] = useState<MealType>(guessMeal);
   const [saving, setSaving] = useState(false);
 
+  // Serving & portion calculator state
+  const [servings, setServings] = useState("1");
+  const [servingUnit, setServingUnit] = useState("serving");
+  const [servingWeight, setServingWeight] = useState(100);
+  const [servingWeightStr, setServingWeightStr] = useState("100");
+  const [showUnitSettings, setShowUnitSettings] = useState(false);
+  const [customUnit, setCustomUnit] = useState("");
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -101,6 +149,12 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setEstimate(null);
     setName("");
     setPortion("");
+    setServings("1");
+    setServingUnit("serving");
+    setServingWeight(100);
+    setServingWeightStr("100");
+    setShowUnitSettings(false);
+    setCustomUnit("");
     setMeal(guessMeal());
     setSaving(false);
   }
@@ -198,7 +252,16 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
 
     setEstimate(data);
     setName(data.name);
-    setPortion(String(data.portionGrams));
+
+    const detectedUnit = data.servingUnit || "serving";
+    const detectedWeight = data.servingWeightGrams || data.portionGrams || 100;
+    setServingUnit(detectedUnit);
+    setServingWeight(detectedWeight);
+    setServingWeightStr(String(detectedWeight));
+    setServings("1");
+    setPortion(String(detectedWeight));
+    setShowUnitSettings(false);
+    setCustomUnit("");
     setMeal(guessMeal());
     setStage("review");
   }
@@ -210,7 +273,68 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setEstimate(null);
   }
 
+  function handleServingsChange(val: string) {
+    setServings(val);
+    const n = parseFloat(val);
+    if (Number.isFinite(n) && n > 0 && servingWeight > 0) {
+      const calculatedGrams = Math.round(n * servingWeight);
+      setPortion(String(calculatedGrams));
+    }
+  }
+
+  function handleStepServings(delta: number) {
+    const current = parseFloat(servings) || 1;
+    const next = Math.max(0.25, Math.round((current + delta) * 100) / 100);
+    setServings(String(next));
+    if (servingWeight > 0) {
+      setPortion(String(Math.round(next * servingWeight)));
+    }
+  }
+
+  function handlePreset(mult: number) {
+    setServings(String(mult));
+    if (servingWeight > 0) {
+      setPortion(String(Math.round(mult * servingWeight)));
+    }
+  }
+
+  function handlePortionChange(val: string) {
+    setPortion(val);
+    const grams = parseFloat(val);
+    if (Number.isFinite(grams) && grams > 0 && servingWeight > 0) {
+      const calculatedServings = Math.round((grams / servingWeight) * 100) / 100;
+      setServings(String(calculatedServings));
+    }
+  }
+
+  function handleWeightChange(val: string) {
+    setServingWeightStr(val);
+    const w = parseFloat(val);
+    if (Number.isFinite(w) && w > 0 && w <= 5000) {
+      setServingWeight(w);
+      const s = parseFloat(servings) || 1;
+      setPortion(String(Math.round(s * w)));
+    }
+  }
+
+  function handleUnitSelect(val: string) {
+    if (val === "custom") {
+      setShowUnitSettings(true);
+    } else {
+      setServingUnit(val);
+    }
+  }
+
+  function appendServingToName() {
+    const s = parseFloat(servings) || 1;
+    const unitText = formatUnit(servingUnit, s);
+    const tag = `${s} ${unitText}`;
+    const cleaned = name.replace(/\s*\([\d.]+\s*[^)]+\)/g, "").trim();
+    setName(`${cleaned} (${tag})`);
+  }
+
   const portionNum = Number(portion);
+  const servingsNum = parseFloat(servings) || 0;
   const validPortion =
     Number.isFinite(portionNum) && portionNum > 0 && portionNum <= 5000;
   const canSave =
@@ -385,25 +509,244 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="scan-name">What is it?</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="scan-name">What is it?</Label>
+              {servingsNum > 0 && (
+                <button
+                  type="button"
+                  onClick={appendServingToName}
+                  className="flex items-center gap-1 text-[11px] text-primary hover:underline"
+                >
+                  <Tag className="size-3" />
+                  Add &quot;{servingsNum} {formatUnit(servingUnit, servingsNum)}&quot; to name
+                </button>
+              )}
+            </div>
             <Input
               id="scan-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Chicken burrito bowl"
+              placeholder="e.g. Whey protein isolate powder"
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <PortionField
-              id="scan-portion"
-              value={portion}
-              onChange={setPortion}
-            />
-            <MealSelect id="scan-meal" value={meal} onChange={setMeal} />
+          <MealSelect id="scan-meal" value={meal} onChange={setMeal} />
+
+          {/* Portion & Servings Recalculator */}
+          <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3.5">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Scale className="size-3.5 text-primary" />
+                Portion &amp; Servings
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  1 {servingUnit} ≈{" "}
+                  <span className="font-medium text-foreground">{servingWeight}g</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowUnitSettings((v) => !v)}
+                  title="Customize unit and single serving weight"
+                >
+                  <SlidersHorizontal className="size-3 mr-1" />
+                  {showUnitSettings ? "Close" : "Edit unit"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Dual synchronized controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Servings stepper field */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="capitalize font-medium">
+                    {formatUnit(servingUnit, servingsNum || 1)}
+                  </span>
+                  <span className="text-[10px]">servings count</span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 shrink-0 rounded-lg"
+                    onClick={() => handleStepServings(-0.5)}
+                    disabled={servingsNum <= 0.25}
+                    aria-label="Decrease portion"
+                  >
+                    <Minus className="size-3.5" />
+                  </Button>
+
+                  <div className="relative flex-1">
+                    <Input
+                      id="scan-servings"
+                      inputMode="decimal"
+                      value={servings}
+                      onChange={(e) => handleServingsChange(e.target.value)}
+                      className="text-center font-semibold text-base pr-8"
+                      placeholder="1"
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted-foreground select-none">
+                      {servingUnit.slice(0, 5)}
+                    </span>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 shrink-0 rounded-lg"
+                    onClick={() => handleStepServings(0.5)}
+                    aria-label="Increase portion"
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Total weight field */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="font-medium">Total Weight</span>
+                  <span className="text-[10px]">auto-calculated</span>
+                </div>
+                <div className="relative">
+                  <Input
+                    id="scan-portion"
+                    inputMode="decimal"
+                    value={portion}
+                    onChange={(e) => handlePortionChange(e.target.value)}
+                    className="pr-12 font-medium"
+                    placeholder="30"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground select-none">
+                    grams
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick multiplier presets */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[11px] text-muted-foreground mr-1">Quick:</span>
+              {[0.5, 1, 1.5, 2, 3].map((mult) => {
+                const isSelected = Math.abs(servingsNum - mult) < 0.01;
+                return (
+                  <button
+                    key={mult}
+                    type="button"
+                    onClick={() => handlePreset(mult)}
+                    className={cn(
+                      "rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer",
+                      isSelected
+                        ? "bg-primary text-primary-foreground shadow-sm font-semibold"
+                        : "bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/50"
+                    )}
+                  >
+                    {mult}x
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Unit Settings Drawer (collapsible) */}
+            {showUnitSettings && (
+              <div className="rounded-lg border border-border/70 bg-background/80 p-3 space-y-3 text-xs animate-in fade-in-50 duration-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Serving Unit</Label>
+                    <Select
+                      value={COMMON_UNITS.includes(servingUnit) ? servingUnit : "custom"}
+                      onValueChange={handleUnitSelect}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COMMON_UNITS.map((u) => (
+                          <SelectItem key={u} value={u} className="text-xs capitalize">
+                            {u}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="custom" className="text-xs">
+                          Custom…
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Grams per 1 {servingUnit}
+                    </Label>
+                    <Input
+                      inputMode="decimal"
+                      value={servingWeightStr}
+                      onChange={(e) => handleWeightChange(e.target.value)}
+                      className="h-8 text-xs font-medium"
+                      placeholder="30"
+                    />
+                  </div>
+                </div>
+
+                {!COMMON_UNITS.includes(servingUnit) && (
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Custom unit name</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={customUnit}
+                        onChange={(e) => setCustomUnit(e.target.value)}
+                        placeholder="e.g. scoop, packet, muffin"
+                        className="h-8 text-xs flex-1"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => {
+                          if (customUnit.trim()) {
+                            setServingUnit(customUnit.trim().toLowerCase());
+                            setCustomUnit("");
+                          }
+                        }}
+                      >
+                        Apply
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {previewMacros && <MacroPreview preview={previewMacros} />}
+          {/* Live Recalculated Macros */}
+          {previewMacros && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs px-0.5">
+                <span className="font-medium text-foreground flex items-center gap-1.5">
+                  <Sparkles className="size-3 text-primary" />
+                  Recalculated for{" "}
+                  <span className="text-primary font-semibold">
+                    {servingsNum > 0
+                      ? `${servingsNum} ${formatUnit(servingUnit, servingsNum)}`
+                      : `${portionNum}g`}
+                  </span>{" "}
+                  ({portionNum}g)
+                </span>
+                {servingWeight > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {Math.round((estimate.kcalPer100g * servingWeight) / 100)} kcal / {servingUnit}
+                  </span>
+                )}
+              </div>
+              <MacroPreview preview={previewMacros} />
+            </div>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Estimates only — not medical or dietary advice. Adjust portions to
