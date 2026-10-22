@@ -26,9 +26,9 @@ export const MAIN_NAV: NavItem[] = [
 ];
 
 export const BOTTOM_NAV: NavItem[] = [
-  MAIN_NAV[0],
-  MAIN_NAV[1],
-  MAIN_NAV[2], // /scan — Camera, elevated center button
+  MAIN_NAV[0], // /dashboard
   MAIN_NAV[3], // /places — Nearby Dining
+  MAIN_NAV[2], // /scan — Camera, elevated center button
+  MAIN_NAV[5], // /assistant — AI Assistant
   { href: "/profile", label: "Profile", icon: User },
 ];
