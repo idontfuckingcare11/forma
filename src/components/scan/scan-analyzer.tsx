@@ -254,12 +254,24 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setName(data.name);
 
     const detectedUnit = data.servingUnit || "serving";
-    const detectedWeight = data.servingWeightGrams || data.portionGrams || 100;
+    const detectedUnitWeight =
+      typeof data.servingWeightGrams === "number" && data.servingWeightGrams > 0
+        ? data.servingWeightGrams
+        : 100;
+    const detectedCount =
+      typeof data.servingCount === "number" && data.servingCount > 0
+        ? data.servingCount
+        : 1;
+    const initialPortion =
+      typeof data.portionGrams === "number" && data.portionGrams > 0
+        ? data.portionGrams
+        : Math.round(detectedUnitWeight * detectedCount * 10) / 10;
+
     setServingUnit(detectedUnit);
-    setServingWeight(detectedWeight);
-    setServingWeightStr(String(detectedWeight));
-    setServings("1");
-    setPortion(String(detectedWeight));
+    setServingWeight(detectedUnitWeight);
+    setServingWeightStr(String(detectedUnitWeight));
+    setServings(String(detectedCount));
+    setPortion(String(initialPortion));
     setShowUnitSettings(false);
     setCustomUnit("");
     setMeal(guessMeal());
@@ -277,8 +289,16 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setServings(val);
     const n = parseFloat(val);
     if (Number.isFinite(n) && n > 0 && servingWeight > 0) {
-      const calculatedGrams = Math.round(n * servingWeight);
-      setPortion(String(calculatedGrams));
+      if (
+        estimate?.servingCount &&
+        Math.abs(n - estimate.servingCount) < 0.001 &&
+        estimate.portionGrams
+      ) {
+        setPortion(String(estimate.portionGrams));
+      } else {
+        const calculatedGrams = Math.round(n * servingWeight * 10) / 10;
+        setPortion(String(calculatedGrams));
+      }
     }
   }
 
@@ -287,14 +307,30 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     const next = Math.max(0.25, Math.round((current + delta) * 100) / 100);
     setServings(String(next));
     if (servingWeight > 0) {
-      setPortion(String(Math.round(next * servingWeight)));
+      if (
+        estimate?.servingCount &&
+        Math.abs(next - estimate.servingCount) < 0.001 &&
+        estimate.portionGrams
+      ) {
+        setPortion(String(estimate.portionGrams));
+      } else {
+        setPortion(String(Math.round(next * servingWeight * 10) / 10));
+      }
     }
   }
 
   function handlePreset(mult: number) {
     setServings(String(mult));
     if (servingWeight > 0) {
-      setPortion(String(Math.round(mult * servingWeight)));
+      if (
+        estimate?.servingCount &&
+        Math.abs(mult - estimate.servingCount) < 0.001 &&
+        estimate.portionGrams
+      ) {
+        setPortion(String(estimate.portionGrams));
+      } else {
+        setPortion(String(Math.round(mult * servingWeight * 10) / 10));
+      }
     }
   }
 
@@ -302,7 +338,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setPortion(val);
     const grams = parseFloat(val);
     if (Number.isFinite(grams) && grams > 0 && servingWeight > 0) {
-      const calculatedServings = Math.round((grams / servingWeight) * 100) / 100;
+      const calculatedServings = Math.round((grams / servingWeight) * 10) / 10;
       setServings(String(calculatedServings));
     }
   }
@@ -313,7 +349,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     if (Number.isFinite(w) && w > 0 && w <= 5000) {
       setServingWeight(w);
       const s = parseFloat(servings) || 1;
-      setPortion(String(Math.round(s * w)));
+      setPortion(String(Math.round(s * w * 10) / 10));
     }
   }
 
@@ -543,6 +579,11 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                 <span className="text-xs text-muted-foreground">
                   1 {servingUnit} ≈{" "}
                   <span className="font-medium text-foreground">{servingWeight}g</span>
+                  {estimate.servingCount && estimate.servingCount > 1 ? (
+                    <span className="ml-1 text-[11px] text-muted-foreground/80">
+                      ({estimate.servingCount} {formatUnit(servingUnit, estimate.servingCount)} = {estimate.portionGrams}g)
+                    </span>
+                  ) : null}
                 </span>
                 <Button
                   type="button"
@@ -566,7 +607,11 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                   <span className="capitalize font-medium">
                     {formatUnit(servingUnit, servingsNum || 1)}
                   </span>
-                  <span className="text-[10px]">servings count</span>
+                  <span className="text-[10px]">
+                    {estimate.servingCount && estimate.servingCount > 1
+                      ? `label: ${estimate.servingCount} ${formatUnit(servingUnit, estimate.servingCount)}`
+                      : "servings count"}
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-1.5">
@@ -634,8 +679,16 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
             {/* Quick multiplier presets */}
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <span className="text-[11px] text-muted-foreground mr-1">Quick:</span>
-              {[0.5, 1, 1.5, 2, 3].map((mult) => {
+              {(estimate.servingCount &&
+              estimate.servingCount > 1 &&
+              ![0.5, 1, 1.5, 2, 3].includes(estimate.servingCount)
+                ? [...[0.5, 1, 1.5, 2, 3], estimate.servingCount].sort((a, b) => a - b)
+                : [0.5, 1, 1.5, 2, 3]
+              ).map((mult) => {
                 const isSelected = Math.abs(servingsNum - mult) < 0.01;
+                const isLabelServing =
+                  estimate.servingCount &&
+                  Math.abs(estimate.servingCount - mult) < 0.01;
                 return (
                   <button
                     key={mult}
@@ -647,8 +700,9 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                         ? "bg-primary text-primary-foreground shadow-sm font-semibold"
                         : "bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/50"
                     )}
+                    title={isLabelServing ? "Standard label serving" : undefined}
                   >
-                    {mult}x
+                    {mult}x{isLabelServing && mult > 1 ? " (serving)" : ""}
                   </button>
                 );
               })}
