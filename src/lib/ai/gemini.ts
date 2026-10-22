@@ -1,5 +1,14 @@
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
+export type FoodComponent = {
+  name: string;
+  portionGrams: number;
+  kcalPer100g: number;
+  proteinPer100g: number;
+  carbsPer100g: number;
+  fatPer100g: number;
+};
+
 export type FoodEstimate = {
   name: string;
   portionGrams: number;
@@ -12,6 +21,7 @@ export type FoodEstimate = {
   servingUnit?: string;
   servingWeightGrams?: number;
   servingCount?: number;
+  components?: FoodComponent[];
 };
 
 export type AnalyzeResult =
@@ -61,7 +71,7 @@ const RESPONSE_SCHEMA = {
     serving_unit: {
       type: "string",
       description:
-        "The discrete singular unit name if known (lowercase singular, e.g. 'scoop', 'slice', 'piece', 'cookie', 'bar', 'can', 'bottle', 'cup', 'serving').",
+        "The discrete singular unit name if known (lowercase singular, e.g. 'scoop', 'slice', 'piece', 'cookie', 'bar', 'can', 'bottle', 'cup', 'serving', 'bowl', 'plate').",
     },
     units_per_serving: {
       type: "number",
@@ -76,6 +86,38 @@ const RESPONSE_SCHEMA = {
       maximum: 5000,
       description:
         "Weight in grams of ONE SINGLE INDIVIDUAL UNIT. CRITICAL: If 3 scoops = 31g, ONE scoop is 31 / 3 = 10.33g! NEVER set this to 31g when 3 scoops = 31g.",
+    },
+    components: {
+      type: "array",
+      description:
+        "If the image shows a multi-item or mixed plate (e.g. 'Pork adobo with rice', 'Chicken with rice and vegetables', 'Steak with potatoes'), list each distinct visible item with its estimated grams and per-100g nutrition. If it is a single food item or packaged label, leave this array empty.",
+      items: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Name of the component, e.g. 'Cooked white rice', 'Pork adobo'.",
+          },
+          portion_grams: {
+            type: "number",
+            minimum: 1,
+            maximum: 5000,
+            description: "Estimated weight of this component in grams.",
+          },
+          kcal_per_100g: { type: "number", minimum: 0, maximum: 950 },
+          protein_per_100g: { type: "number", minimum: 0, maximum: 100 },
+          carbs_per_100g: { type: "number", minimum: 0, maximum: 100 },
+          fat_per_100g: { type: "number", minimum: 0, maximum: 100 },
+        },
+        required: [
+          "name",
+          "portion_grams",
+          "kcal_per_100g",
+          "protein_per_100g",
+          "carbs_per_100g",
+          "fat_per_100g",
+        ],
+      },
     },
   },
   required: [
@@ -113,8 +155,17 @@ CRITICAL RULES FOR NUTRITION FACTS & SUPPLEMENT FACTS LABELS:
   * Example: 120 kcal for 31g -> (120 / 31) * 100 = 387 kcal per 100g. 24g protein for 31g -> (24 / 31) * 100 = 77.4g per 100g.
 
 RULES FOR MEAL / FOOD PHOTOS (NO LABEL):
+- MULTI-COMPONENT PLATES (VERY IMPORTANT):
+  * If the photo shows a combination plate or meal with multiple distinct components (e.g. 'Pork adobo with rice', 'Grilled chicken with rice and broccoli', 'Steak with mashed potatoes'):
+    - Populate the 'components' array with each distinct visible food item, its estimated portion_grams, and its individual nutrition per 100g.
+    - Example for 'Pork adobo with rice' (~400g total):
+      * Item 1: name: 'Cooked white rice', portion_grams: 200, kcal_per_100g: 130, protein_per_100g: 2.7, carbs_per_100g: 28.2, fat_per_100g: 0.3
+      * Item 2: name: 'Pork adobo', portion_grams: 200, kcal_per_100g: 240, protein_per_100g: 19.5, carbs_per_100g: 4.5, fat_per_100g: 16.5
+    - Make sure the top-level portion_grams is the sum of component portion_grams (e.g. 400g).
+    - The top-level kcal_per_100g, protein_per_100g, carbs_per_100g, and fat_per_100g should reflect the weighted average of the combined meal.
+- If it is a single food item or packaged label, 'components' should be empty.
 - Estimate total portion weight in portion_grams.
-- serving_unit: 'serving', 'bowl', 'slice', 'piece', 'cup', etc.
+- serving_unit: 'serving', 'bowl', 'plate', 'slice', 'piece', 'cup', etc.
 - units_per_serving: 1.
 - serving_weight_grams: same as portion_grams (or weight of 1 piece/slice if countable).
 - All *_per_100g values are per 100 grams AS EATEN (include visible oil, butter, sauce, dressing).
@@ -396,21 +447,79 @@ export async function analyzeFoodImage(
     }
   }
 
-  const finalPortionGrams = Math.round(detectedTotalGrams);
+  // Parse multi-item meal components if present
+  const rawComponents = Array.isArray(o.components) ? o.components : [];
+  const parsedComponents: FoodComponent[] = [];
+
+  for (const c of rawComponents) {
+    if (!c || typeof c !== "object") continue;
+    const item = c as Record<string, unknown>;
+    const cName = typeof item.name === "string" ? item.name.trim().slice(0, 60) : "";
+    if (!cName) continue;
+    const cPortion = Math.round(clamp(toFinite(item.portion_grams, 100), 1, 5000));
+    parsedComponents.push({
+      name: cName,
+      portionGrams: cPortion,
+      kcalPer100g: Math.round(clamp(toFinite(item.kcal_per_100g, 0), 0, 950)),
+      proteinPer100g: Math.round(clamp(toFinite(item.protein_per_100g, 0), 0, 100)),
+      carbsPer100g: Math.round(clamp(toFinite(item.carbs_per_100g, 0), 0, 100)),
+      fatPer100g: Math.round(clamp(toFinite(item.fat_per_100g, 0), 0, 100)),
+    });
+  }
+
+  let finalKcalPer100g = Math.round(clamp(toFinite(o.kcal_per_100g, 0), 0, 950));
+  let finalProteinPer100g = Math.round(clamp(toFinite(o.protein_per_100g, 0), 0, 100));
+  let finalCarbsPer100g = Math.round(clamp(toFinite(o.carbs_per_100g, 0), 0, 100));
+  let finalFatPer100g = Math.round(clamp(toFinite(o.fat_per_100g, 0), 0, 100));
+  let finalPortionGrams = Math.round(detectedTotalGrams);
+
+  // If multiple components exist, synchronize top-level portion and macros
+  if (parsedComponents.length > 1) {
+    const compTotalGrams = parsedComponents.reduce((sum, c) => sum + c.portionGrams, 0);
+    if (compTotalGrams > 0) {
+      finalPortionGrams = compTotalGrams;
+      if (detectedUnitsCount <= 1) {
+        servingWeight = compTotalGrams;
+      }
+      const totalKcal = parsedComponents.reduce(
+        (sum, c) => sum + (c.kcalPer100g * c.portionGrams) / 100,
+        0
+      );
+      const totalProtein = parsedComponents.reduce(
+        (sum, c) => sum + (c.proteinPer100g * c.portionGrams) / 100,
+        0
+      );
+      const totalCarbs = parsedComponents.reduce(
+        (sum, c) => sum + (c.carbsPer100g * c.portionGrams) / 100,
+        0
+      );
+      const totalFat = parsedComponents.reduce(
+        (sum, c) => sum + (c.fatPer100g * c.portionGrams) / 100,
+        0
+      );
+
+      finalKcalPer100g = Math.round((totalKcal / compTotalGrams) * 100);
+      finalProteinPer100g = Math.round((totalProtein / compTotalGrams) * 100);
+      finalCarbsPer100g = Math.round((totalCarbs / compTotalGrams) * 100);
+      finalFatPer100g = Math.round((totalFat / compTotalGrams) * 100);
+    }
+  }
+
   const finalServingCount = detectedUnitsCount > 1 ? detectedUnitsCount : 1;
 
   const estimate: FoodEstimate = {
     name,
     portionGrams: finalPortionGrams,
-    kcalPer100g: Math.round(clamp(toFinite(o.kcal_per_100g, 0), 0, 950)),
-    proteinPer100g: Math.round(clamp(toFinite(o.protein_per_100g, 0), 0, 100)),
-    carbsPer100g: Math.round(clamp(toFinite(o.carbs_per_100g, 0), 0, 100)),
-    fatPer100g: Math.round(clamp(toFinite(o.fat_per_100g, 0), 0, 100)),
+    kcalPer100g: finalKcalPer100g,
+    proteinPer100g: finalProteinPer100g,
+    carbsPer100g: finalCarbsPer100g,
+    fatPer100g: finalFatPer100g,
     confidence: Math.round(clamp(toFinite(o.confidence, 0.5), 0, 1) * 100) / 100,
     notes: rawNotes,
     servingUnit: detectedUnitName,
     servingWeightGrams: servingWeight,
     servingCount: finalServingCount,
+    components: parsedComponents.length > 0 ? parsedComponents : undefined,
   };
 
   return { ok: true, data: estimate };

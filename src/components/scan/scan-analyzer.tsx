@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { analyzeFoodImage } from "@/lib/actions/ai";
 import { addFoodEntry } from "@/lib/actions/food";
-import type { FoodEstimate } from "@/lib/ai/gemini";
+import type { FoodEstimate, FoodComponent } from "@/lib/ai/gemini";
 import type { MealType } from "@/lib/db-types";
 import { todayKey } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,7 @@ import {
   Tag,
   Trash2,
   Upload,
+  UtensilsCrossed,
   X,
 } from "lucide-react";
 
@@ -107,6 +108,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   const [portion, setPortion] = useState("");
   const [meal, setMeal] = useState<MealType>(guessMeal);
   const [saving, setSaving] = useState(false);
+  const [components, setComponents] = useState<FoodComponent[]>([]);
 
   // Serving & portion calculator state
   const [servings, setServings] = useState("1");
@@ -149,6 +151,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setEstimate(null);
     setName("");
     setPortion("");
+    setComponents([]);
     setServings("1");
     setServingUnit("serving");
     setServingWeight(100);
@@ -267,6 +270,9 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
         ? data.portionGrams
         : Math.round(detectedUnitWeight * detectedCount * 10) / 10;
 
+    const detectedComps = data.components && data.components.length > 0 ? data.components : [];
+    setComponents(detectedComps);
+
     setServingUnit(detectedUnit);
     setServingWeight(detectedUnitWeight);
     setServingWeightStr(String(detectedUnitWeight));
@@ -285,20 +291,83 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setEstimate(null);
   }
 
+  function scaleComponents(newTotalGrams: number, oldTotalGrams: number) {
+    if (components.length <= 1 || oldTotalGrams <= 0 || newTotalGrams <= 0) return;
+    const ratio = newTotalGrams / oldTotalGrams;
+    setComponents((prev) =>
+      prev.map((c) => ({
+        ...c,
+        portionGrams: Math.max(1, Math.round(c.portionGrams * ratio)),
+      }))
+    );
+  }
+
+  function handleComponentGramsChange(idx: number, gramsStr: string) {
+    const g = parseFloat(gramsStr);
+    const safeGrams = Number.isFinite(g) && g >= 0 ? g : 0;
+    const updated = components.map((comp, i) =>
+      i === idx ? { ...comp, portionGrams: safeGrams } : comp
+    );
+    setComponents(updated);
+
+    const newTotal = updated.reduce((sum, c) => sum + (c.portionGrams || 0), 0);
+    setPortion(String(Math.round(newTotal)));
+    if (servingWeight > 0) {
+      setServings(String(Math.round((newTotal / servingWeight) * 10) / 10));
+    }
+  }
+
+  function handleComponentNameChange(idx: number, newName: string) {
+    setComponents((prev) =>
+      prev.map((c, i) => (i === idx ? { ...c, name: newName } : c))
+    );
+  }
+
+  function handleRemoveComponent(idx: number) {
+    const updated = components.filter((_, i) => i !== idx);
+    setComponents(updated);
+    const newTotal = updated.reduce((sum, c) => sum + (c.portionGrams || 0), 0);
+    setPortion(String(Math.round(newTotal)));
+    if (servingWeight > 0) {
+      setServings(String(Math.round((newTotal / servingWeight) * 10) / 10));
+    }
+  }
+
+  function handleAddComponent() {
+    const newComp: FoodComponent = {
+      name: "Side dish",
+      portionGrams: 100,
+      kcalPer100g: 130,
+      proteinPer100g: 3,
+      carbsPer100g: 25,
+      fatPer100g: 1,
+    };
+    const updated = [...components, newComp];
+    setComponents(updated);
+    const newTotal = updated.reduce((sum, c) => sum + (c.portionGrams || 0), 0);
+    setPortion(String(Math.round(newTotal)));
+    if (servingWeight > 0) {
+      setServings(String(Math.round((newTotal / servingWeight) * 10) / 10));
+    }
+  }
+
   function handleServingsChange(val: string) {
     setServings(val);
     const n = parseFloat(val);
     if (Number.isFinite(n) && n > 0 && servingWeight > 0) {
+      const oldG = parseFloat(portion) || 0;
+      let calculatedGrams: number;
       if (
         estimate?.servingCount &&
         Math.abs(n - estimate.servingCount) < 0.001 &&
         estimate.portionGrams
       ) {
-        setPortion(String(estimate.portionGrams));
+        calculatedGrams = estimate.portionGrams;
       } else {
-        const calculatedGrams = Math.round(n * servingWeight * 10) / 10;
-        setPortion(String(calculatedGrams));
+        calculatedGrams = Math.round(n * servingWeight * 10) / 10;
       }
+      setPortion(String(calculatedGrams));
+      scaleComponents(calculatedGrams, oldG);
     }
   }
 
@@ -307,39 +376,49 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     const next = Math.max(0.25, Math.round((current + delta) * 100) / 100);
     setServings(String(next));
     if (servingWeight > 0) {
+      const oldG = parseFloat(portion) || 0;
+      let calculatedGrams: number;
       if (
         estimate?.servingCount &&
         Math.abs(next - estimate.servingCount) < 0.001 &&
         estimate.portionGrams
       ) {
-        setPortion(String(estimate.portionGrams));
+        calculatedGrams = estimate.portionGrams;
       } else {
-        setPortion(String(Math.round(next * servingWeight * 10) / 10));
+        calculatedGrams = Math.round(next * servingWeight * 10) / 10;
       }
+      setPortion(String(calculatedGrams));
+      scaleComponents(calculatedGrams, oldG);
     }
   }
 
   function handlePreset(mult: number) {
     setServings(String(mult));
     if (servingWeight > 0) {
+      const oldG = parseFloat(portion) || 0;
+      let calculatedGrams: number;
       if (
         estimate?.servingCount &&
         Math.abs(mult - estimate.servingCount) < 0.001 &&
         estimate.portionGrams
       ) {
-        setPortion(String(estimate.portionGrams));
+        calculatedGrams = estimate.portionGrams;
       } else {
-        setPortion(String(Math.round(mult * servingWeight * 10) / 10));
+        calculatedGrams = Math.round(mult * servingWeight * 10) / 10;
       }
+      setPortion(String(calculatedGrams));
+      scaleComponents(calculatedGrams, oldG);
     }
   }
 
   function handlePortionChange(val: string) {
+    const oldG = parseFloat(portion) || 0;
     setPortion(val);
     const grams = parseFloat(val);
     if (Number.isFinite(grams) && grams > 0 && servingWeight > 0) {
       const calculatedServings = Math.round((grams / servingWeight) * 10) / 10;
       setServings(String(calculatedServings));
+      scaleComponents(grams, oldG);
     }
   }
 
@@ -347,9 +426,12 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     setServingWeightStr(val);
     const w = parseFloat(val);
     if (Number.isFinite(w) && w > 0 && w <= 5000) {
+      const oldG = parseFloat(portion) || 0;
       setServingWeight(w);
       const s = parseFloat(servings) || 1;
-      setPortion(String(Math.round(s * w * 10) / 10));
+      const newG = Math.round(s * w * 10) / 10;
+      setPortion(String(newG));
+      scaleComponents(newG, oldG);
     }
   }
 
@@ -378,29 +460,61 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
 
   const previewMacros =
     estimate && validPortion
-      ? (() => {
-          const scale = portionNum / 100;
-          return {
-            kcal: Math.round(estimate.kcalPer100g * scale),
-            protein: Math.round(estimate.proteinPer100g * scale),
-            carbs: Math.round(estimate.carbsPer100g * scale),
-            fat: Math.round(estimate.fatPer100g * scale),
-          };
-        })()
+      ? components.length > 1
+        ? components.reduce(
+            (acc, c) => {
+              const scale = (c.portionGrams || 0) / 100;
+              return {
+                kcal: acc.kcal + Math.round(c.kcalPer100g * scale),
+                protein: acc.protein + Math.round(c.proteinPer100g * scale),
+                carbs: acc.carbs + Math.round(c.carbsPer100g * scale),
+                fat: acc.fat + Math.round(c.fatPer100g * scale),
+              };
+            },
+            { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+          )
+        : (() => {
+            const scale = portionNum / 100;
+            return {
+              kcal: Math.round(estimate.kcalPer100g * scale),
+              protein: Math.round(estimate.proteinPer100g * scale),
+              carbs: Math.round(estimate.carbsPer100g * scale),
+              fat: Math.round(estimate.fatPer100g * scale),
+            };
+          })()
       : null;
 
   async function save() {
     if (!estimate || !previewMacros || !canSave) return;
     setSaving(true);
+
+    const totalGrams = portionNum;
+    const kcalPer100g =
+      totalGrams > 0
+        ? Math.round((previewMacros.kcal / totalGrams) * 100)
+        : estimate.kcalPer100g;
+    const proteinPer100g =
+      totalGrams > 0
+        ? Math.round((previewMacros.protein / totalGrams) * 100)
+        : estimate.proteinPer100g;
+    const carbsPer100g =
+      totalGrams > 0
+        ? Math.round((previewMacros.carbs / totalGrams) * 100)
+        : estimate.carbsPer100g;
+    const fatPer100g =
+      totalGrams > 0
+        ? Math.round((previewMacros.fat / totalGrams) * 100)
+        : estimate.fatPer100g;
+
     const result = await addFoodEntry({
       meal,
       eatenOn: todayKey(),
       name: name.trim(),
       portionGrams: portionNum,
-      kcalPer100g: estimate.kcalPer100g,
-      proteinPer100g: estimate.proteinPer100g,
-      carbsPer100g: estimate.carbsPer100g,
-      fatPer100g: estimate.fatPer100g,
+      kcalPer100g,
+      proteinPer100g,
+      carbsPer100g,
+      fatPer100g,
       source: "ai",
     });
     setSaving(false);
@@ -567,6 +681,98 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
           </div>
 
           <MealSelect id="scan-meal" value={meal} onChange={setMeal} />
+
+          {/* Multi-Component Plate Breakdown */}
+          {components.length > 0 && (
+            <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
+                    <UtensilsCrossed className="size-3.5" />
+                    Meal Components
+                  </span>
+                  <p className="text-[11px] text-muted-foreground">
+                    Weigh items on your scale &amp; adjust grams for accurate tracking
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-primary hover:text-primary hover:bg-primary/10"
+                  onClick={handleAddComponent}
+                >
+                  <Plus className="size-3.5 mr-1" />
+                  Add item
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {components.map((comp, idx) => {
+                  const compScale = (comp.portionGrams || 0) / 100;
+                  const cKcal = Math.round(comp.kcalPer100g * compScale);
+                  const cProt = Math.round(comp.proteinPer100g * compScale * 10) / 10;
+                  const cCarb = Math.round(comp.carbsPer100g * compScale * 10) / 10;
+                  const cFat = Math.round(comp.fatPer100g * compScale * 10) / 10;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-lg border border-border/70 bg-card p-2.5 space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <Input
+                          value={comp.name}
+                          onChange={(e) => handleComponentNameChange(idx, e.target.value)}
+                          className="h-8 text-xs font-medium bg-muted/30 border-border/50 hover:border-border focus:border-primary px-2"
+                          placeholder="e.g. Cooked white rice"
+                        />
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="relative w-24">
+                            <Input
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              max={5000}
+                              value={comp.portionGrams || ""}
+                              onChange={(e) => handleComponentGramsChange(idx, e.target.value)}
+                              className="h-8 pr-7 text-right text-xs font-semibold"
+                              placeholder="0"
+                            />
+                            <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-[11px] text-muted-foreground select-none">
+                              g
+                            </span>
+                          </div>
+                          {components.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-muted-foreground hover:text-red-400"
+                              onClick={() => handleRemoveComponent(idx)}
+                              title="Remove item"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground px-0.5">
+                        <span className="font-semibold text-foreground">{cKcal} kcal</span>
+                        <span>·</span>
+                        <span>{cProt}g P</span>
+                        <span>·</span>
+                        <span>{cCarb}g C</span>
+                        <span>·</span>
+                        <span>{cFat}g F</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Portion & Servings Recalculator */}
           <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3.5">
