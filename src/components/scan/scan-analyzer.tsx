@@ -121,6 +121,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
 
   // Attach the camera stream once the video element is on screen.
@@ -146,6 +147,8 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   function reset() {
     requestRef.current++;
     stopCamera();
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
     setStage("idle");
     setPreview(null);
     setEstimate(null);
@@ -164,6 +167,9 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
 
   async function openCamera() {
     try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error("getUserMedia unavailable");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 } },
         audio: false,
@@ -171,8 +177,14 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
       streamRef.current = stream;
       setStage("camera");
     } catch {
-      toast.info("Camera unavailable — upload a photo instead.");
-      fileInputRef.current?.click();
+      // On mobile iOS PWA / standalone homescreen, getUserMedia can fail or be restricted.
+      // Trigger the native device camera directly via capture="environment".
+      if (cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        toast.info("Camera unavailable — upload a photo instead.");
+        fileInputRef.current?.click();
+      }
     }
   }
 
@@ -198,7 +210,10 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   }
 
   function handleFile(file: File) {
-    if (!file.type.startsWith("image/")) {
+    const isImage =
+      (file.type && file.type.startsWith("image/")) ||
+      /\.(jpe?g|png|webp|gif|heic|heif|bmp|avif)$/i.test(file.name);
+    if (!isImage) {
       toast.error("Please choose an image file.");
       return;
     }
@@ -214,7 +229,28 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     };
     img.onerror = () => {
       URL.revokeObjectURL(objectUrl);
-      toast.error("Could not read that photo.");
+      // Fallback: attempt FileReader decoding if object URL failed
+      const reader = new FileReader();
+      reader.onload = () => {
+        const fallbackImg = new Image();
+        fallbackImg.onload = () => {
+          try {
+            void runAnalyze(
+              toJpeg(fallbackImg, fallbackImg.naturalWidth, fallbackImg.naturalHeight)
+            );
+          } catch {
+            toast.error("Could not read that photo.");
+          }
+        };
+        fallbackImg.onerror = () => {
+          toast.error("Could not read that photo.");
+        };
+        fallbackImg.src = reader.result as string;
+      };
+      reader.onerror = () => {
+        toast.error("Could not read that photo.");
+      };
+      reader.readAsDataURL(file);
     };
     img.src = objectUrl;
   }
@@ -527,25 +563,41 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     router.refresh();
   }
 
-  const fileInput = (
-    <input
-      ref={fileInputRef}
-      type="file"
-      accept="image/*"
-      capture="environment"
-      className="hidden"
-      aria-label="Upload a food photo"
-      onChange={(e) => {
-        const file = e.target.files?.[0];
-        e.target.value = "";
-        if (file) handleFile(file);
-      }}
-    />
+  const fileInputs = (
+    <>
+      {/* Standard photo picker without capture attribute so iOS opens the photo library */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        aria-label="Upload a food photo from library"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) handleFile(file);
+        }}
+      />
+      {/* Mobile camera fallback with capture="environment" to directly open device camera */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        aria-label="Take food photo with camera"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) handleFile(file);
+        }}
+      />
+    </>
   );
 
   return (
     <div className="space-y-4">
-      {fileInput}
+      {fileInputs}
 
       {stage === "idle" && (
         <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border px-6 py-12 text-center">

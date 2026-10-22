@@ -31,6 +31,10 @@ export type AddEntryInput = {
   fatPer100g: number;
   foodItemId?: string | null;
   source?: "manual" | "ai" | "duplicated";
+  exactKcal?: number;
+  exactProtein?: number;
+  exactCarbs?: number;
+  exactFat?: number;
 };
 
 export async function addFoodEntry(
@@ -49,6 +53,23 @@ export async function addFoodEntry(
     return { ok: false, error: "Portion must be between 1 and 5000 g." };
 
   const scale = input.portionGrams / 100;
+  const kcal =
+    input.exactKcal !== undefined
+      ? input.exactKcal
+      : Math.round(input.kcalPer100g * scale * 10) / 10;
+  const protein =
+    input.exactProtein !== undefined
+      ? input.exactProtein
+      : Math.round(input.proteinPer100g * scale * 10) / 10;
+  const carbs =
+    input.exactCarbs !== undefined
+      ? input.exactCarbs
+      : Math.round(input.carbsPer100g * scale * 10) / 10;
+  const fat =
+    input.exactFat !== undefined
+      ? input.exactFat
+      : Math.round(input.fatPer100g * scale * 10) / 10;
+
   const { data, error } = await supabase
     .from("food_entries")
     .insert({
@@ -58,10 +79,10 @@ export async function addFoodEntry(
       eaten_on: input.eatenOn,
       name: input.name.trim(),
       portion_grams: input.portionGrams,
-      kcal: Math.round(input.kcalPer100g * scale * 10) / 10,
-      protein: Math.round(input.proteinPer100g * scale * 10) / 10,
-      carbs: Math.round(input.carbsPer100g * scale * 10) / 10,
-      fat: Math.round(input.fatPer100g * scale * 10) / 10,
+      kcal,
+      protein,
+      carbs,
+      fat,
       source: input.source ?? "manual",
     })
     .select("id")

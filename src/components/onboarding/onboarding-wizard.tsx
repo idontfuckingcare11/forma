@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -544,10 +543,6 @@ export function OnboardingWizard() {
             </Button>
           )}
         </div>
-      </div>
-
-      <div className="mt-6 flex justify-center">
-        <Logo size="sm" className="opacity-60" />
       </div>
     </div>
   );
