@@ -132,6 +132,11 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     }
   }, [stage]);
 
+  // Sync meal with local browser time on mount to prevent SSR UTC drift
+  useEffect(() => {
+    setMeal(guessMeal());
+  }, []);
+
   // Stop the camera on unmount.
   useEffect(() => {
     return () => {
@@ -182,7 +187,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
       if (cameraInputRef.current) {
         cameraInputRef.current.click();
       } else {
-        toast.info("Camera unavailable — upload a photo instead.");
+        toast.info("Camera unavailable â€” upload a photo instead.");
         fileInputRef.current?.click();
       }
     }
@@ -205,7 +210,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
       setStage("idle");
       void runAnalyze(dataUrl);
     } catch {
-      toast.error("Capture failed — try again.");
+      toast.error("Capture failed â€” try again.");
     }
   }
 
@@ -263,7 +268,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
     const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
 
     if (!base64) {
-      toast.error("Photo data is missing — retake it.");
+      toast.error("Photo data is missing â€” retake it.");
       return;
     }
 
@@ -283,7 +288,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
 
     const data = result.data;
     if (!data) {
-      toast.error("Analysis returned no result — try again.");
+      toast.error("Analysis returned no result â€” try again.");
       setStage("idle");
       setPreview(null);
       return;
@@ -494,9 +499,12 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
   const canSave =
     estimate !== null && validPortion && name.trim().length > 0 && !saving;
 
+  // When components are present, always derive macros from component data so
+  // deletions immediately reflect in the totals. Only fall back to the raw
+  // estimate when there are no components at all.
   const previewMacros =
     estimate && validPortion
-      ? components.length > 1
+      ? components.length > 0
         ? components.reduce(
             (acc, c) => {
               const scale = (c.portionGrams || 0) / 100;
@@ -519,6 +527,28 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
             };
           })()
       : null;
+
+  // Derive the effective per-100g values from the current component set so the
+  // "kcal / plate" summary also updates when components are added or removed.
+  const effectivePer100g = (() => {
+    if (components.length > 0) {
+      const totalGrams = components.reduce((s, c) => s + (c.portionGrams || 0), 0);
+      if (totalGrams > 0 && previewMacros) {
+        return {
+          kcal: (previewMacros.kcal / totalGrams) * 100,
+          protein: (previewMacros.protein / totalGrams) * 100,
+          carbs: (previewMacros.carbs / totalGrams) * 100,
+          fat: (previewMacros.fat / totalGrams) * 100,
+        };
+      }
+    }
+    return {
+      kcal: estimate?.kcalPer100g ?? 0,
+      protein: estimate?.proteinPer100g ?? 0,
+      carbs: estimate?.carbsPer100g ?? 0,
+      fat: estimate?.fatPer100g ?? 0,
+    };
+  })();
 
   async function save() {
     if (!estimate || !previewMacros || !canSave) return;
@@ -607,7 +637,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
           <div>
             <p className="text-sm font-medium">Photograph your meal</p>
             <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Snap a photo or upload one — Gemini estimates the food, portion,
+              Snap a photo or upload one â€” Gemini estimates the food, portion,
               and macros for you to review before saving.
             </p>
           </div>
@@ -672,7 +702,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
           />
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin text-primary" />
-            Analyzing with Gemini…
+            Analyzing with Geminiâ€¦
             <Button
               variant="ghost"
               size="sm"
@@ -700,12 +730,12 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                   confidenceMeta(estimate.confidence).className
                 }`}
               >
-                {confidenceMeta(estimate.confidence).label} ·{" "}
+                {confidenceMeta(estimate.confidence).label} Â·{" "}
                 {Math.round(estimate.confidence * 100)}%
               </span>
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
                 <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                {estimate.notes || "AI estimate — verify before saving."}
+                {estimate.notes || "AI estimate â€” verify before saving."}
               </p>
             </div>
           </div>
@@ -812,11 +842,11 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
 
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground px-0.5">
                         <span className="font-semibold text-foreground">{cKcal} kcal</span>
-                        <span>·</span>
+                        <span>Â·</span>
                         <span>{cProt}g P</span>
-                        <span>·</span>
+                        <span>Â·</span>
                         <span>{cCarb}g C</span>
-                        <span>·</span>
+                        <span>Â·</span>
                         <span>{cFat}g F</span>
                       </div>
                     </div>
@@ -835,7 +865,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">
-                  1 {servingUnit} ≈{" "}
+                  1 {servingUnit} â‰ˆ{" "}
                   <span className="font-medium text-foreground">{servingWeight}g</span>
                   {estimate.servingCount && estimate.servingCount > 1 ? (
                     <span className="ml-1 text-[11px] text-muted-foreground/80">
@@ -986,7 +1016,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                           </SelectItem>
                         ))}
                         <SelectItem value="custom" className="text-xs">
-                          Custom…
+                          Customâ€¦
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -1052,7 +1082,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
                 </span>
                 {servingWeight > 0 && (
                   <span className="text-[11px] text-muted-foreground">
-                    {Math.round((estimate.kcalPer100g * servingWeight) / 100)} kcal / {servingUnit}
+                    {Math.round((effectivePer100g.kcal * servingWeight) / 100)} kcal / {servingUnit}
                   </span>
                 )}
               </div>
@@ -1061,7 +1091,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
           )}
 
           <p className="text-xs text-muted-foreground">
-            Estimates only — not medical or dietary advice. Adjust portions to
+            Estimates only â€” not medical or dietary advice. Adjust portions to
             match what you actually eat.
           </p>
 
@@ -1076,7 +1106,7 @@ export function ScanAnalyzer({ aiEnabled }: { aiEnabled: boolean }) {
               ) : (
                 <Plus className="size-4" />
               )}
-              {saving ? "Saving…" : "Save to diary"}
+              {saving ? "Savingâ€¦" : "Save to diary"}
             </Button>
             <Button
               variant="outline"
